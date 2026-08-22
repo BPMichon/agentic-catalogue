@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": "2",
+  "id": "git",
+  "name": "Git Graph",
+  "version": "0.1.0",
+  "description": "Reads the commit history of any repository this project declares, and draws it as a branch graph in its own desktop tab.",
+  "kind": "plugin",
+  "appliesTo": { "projectKinds": ["*"] },
+  "actions": "actions/index.ts",
+  "permissions": { "actions": ["git.repos", "git.log"] },
+  "ui": {
+    "title": "Git Graph",
+    "entry": "ui/index.js",
+    "placement": "chrome",
+    "icon": "git-graph",
+    "actions": ["git.repos", "git.log"]
+  }
+}

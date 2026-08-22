@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "agentic",
+  "description": "General-purpose plugins for Agentic Project. Nothing domain-specific.",
+  "plugins": [
+    {
+      "id": "git",
+      "name": "Git Graph",
+      "description": "Reads the commit history of any repository this project declares, and draws it as a branch graph in its own desktop tab.",
+      "source": "./plugins/git"
+    },
+    {
+      "id": "updates",
+      "name": "Computer Updater",
+      "description": "Checks this machine for outdated software via winget (including Microsoft Store sources) and reports what needs updating. It never installs anything.",
+      "source": "./plugins/updates"
+    }
+  ]
+}

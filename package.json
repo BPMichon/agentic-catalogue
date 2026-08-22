@@ -1,0 +1,10 @@
+{
+  "name": "agentic-catalogue",
+  "private": true,
+  "type": "module",
+  "description": "A public Agentic Project plugin catalogue.",
+  "//test": "Plugins ship their own tests and this runs them. --experimental-strip-types because a plugin action is .ts and receives zod as ctx.z rather than importing it, so there is no build step and nothing to install.",
+  "scripts": {
+    "test": "node --test --experimental-strip-types \"plugins/**/*.test.ts\" \"plugins/**/*.test.mjs\""
+  }
+}

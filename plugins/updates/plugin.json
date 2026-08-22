@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "apiVersion": "2",
+  "id": "updates",
+  "name": "Computer Updater",
+  "version": "0.1.0",
+  "description": "Checks this machine for outdated software via winget (including Microsoft Store sources) and reports what needs updating. It never installs anything.",
+  "kind": "plugin",
+  "appliesTo": {
+    "projectKinds": [
+      "*"
+    ]
+  },
+  "actions": "actions/index.ts",
+  "permissions": {
+    "actions": [
+      "updates.check"
+    ]
+  },
+  "ui": {
+    "title": "Computer Updater",
+    "entry": "ui/index.js",
+    "placement": "chrome",
+    "icon": "clipboard-list",
+    "actions": [
+      "updates.check"
+    ]
+  }
+}
