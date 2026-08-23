@@ -10,6 +10,12 @@
       "source": "./plugins/git"
     },
     {
+      "id": "kanban",
+      "name": "Kanban",
+      "description": "A kanban board that lives in a git repo. Point it at a GitHub repository and it clones, serves and syncs the board through git-kanban, which must be on PATH.",
+      "source": "./plugins/kanban"
+    },
+    {
       "id": "updates",
       "name": "Computer Updater",
       "description": "Checks this machine for outdated software via winget (including Microsoft Store sources) and reports what needs updating. It never installs anything.",

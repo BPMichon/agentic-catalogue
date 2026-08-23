@@ -1,0 +1,22 @@
+{
+	"schemaVersion": 1,
+	"apiVersion": "2",
+	"id": "kanban",
+	"name": "Kanban",
+	"version": "0.1.0",
+	"description": "A kanban board that lives in a git repo. Point it at a GitHub repository and it clones, serves and syncs the board through git-kanban.",
+	"kind": "plugin",
+	"appliesTo": { "projectKinds": ["*"] },
+	"requires": [{ "id": "git-kanban", "source": "github:BPMichon/GitKanban", "ref": "v0.1.0" }],
+	"actions": "actions/index.ts",
+	"permissions": {
+		"actions": ["kanban.state", "kanban.connect", "kanban.serve", "kanban.add", "kanban.move", "kanban.edit", "kanban.remove"]
+	},
+	"ui": {
+		"title": "Kanban",
+		"entry": "ui/index.js",
+		"placement": "chrome",
+		"icon": "layout-grid",
+		"actions": ["kanban.state", "kanban.connect", "kanban.serve", "kanban.add", "kanban.move", "kanban.edit", "kanban.remove"]
+	}
+}
