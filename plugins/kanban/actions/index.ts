@@ -83,9 +83,6 @@ const CLI = fileURLToPath(new URL("../requires/git-kanban/src/cli.ts", import.me
  */
 const RUN_AS_NODE = { ELECTRON_RUN_AS_NODE: "1" } as const;
 
-/** Where this plugin records which board a project is looking at. */
-const CONFIG = ".AgenticProject/kanban.json";
-
 /**
  * Where a cloned board lands by default.
  *
@@ -132,7 +129,7 @@ export function register(ctx: PluginContext): void {
 		mutating: false,
 		args: z.object({}).strict(),
 		async run(_args, context) {
-			const config = await readConfig(context);
+			const config = configOf(context);
 			if (!config) return { configured: false, running: false, columns: [], cards: [] };
 
 			const base = { configured: true, remote: config.remote, dir: config.dir, port: config.port };
@@ -215,7 +212,17 @@ export function register(ctx: PluginContext): void {
 				dir,
 				port: args.port ?? DEFAULT_PORT,
 			};
-			await writeConfig(context, config);
+			// Written through the CONTEXT, so the same values appear on the settings
+			// screen and in `agentic plugin config`. This used to be a file of our own
+			// that nothing else could see.
+			await context.saveSettings({
+				dir: config.dir,
+				port: config.port,
+				// A board with no origin is legitimate, and `saveSettings` treats an
+				// absent key as "leave alone" — so a null remote is omitted rather
+				// than written as an empty string that would read as configured.
+				...(config.remote ? { remote: config.remote } : {}),
+			});
 			await ignore(context, dir);
 
 			context.log(`board configured at ${dir}, port ${config.port}`);
@@ -242,7 +249,7 @@ export function register(ctx: PluginContext): void {
 		mutating: true,
 		args: z.object({}).strict(),
 		async run(_args, context) {
-			const config = await mustConfig(context);
+			const config = mustConfig(context);
 			const target = context.resolve(config.dir);
 
 			// Already up is a success, not a conflict — the UI calls this on mount and
@@ -326,7 +333,7 @@ export function register(ctx: PluginContext): void {
 			})
 			.strict(),
 		async run(args, context) {
-			const config = await mustConfig(context);
+			const config = mustConfig(context);
 			const card = await write(context, config, "/cards", "POST", args);
 			context.log(`added ${(card as { id?: string }).id ?? "a card"}`);
 			return card;
@@ -346,7 +353,7 @@ export function register(ctx: PluginContext): void {
 			})
 			.strict(),
 		async run(args, context) {
-			const config = await mustConfig(context);
+			const config = mustConfig(context);
 			const { id, ...rest } = args;
 			return write(context, config, `/cards/${encodeURIComponent(id)}/move`, "POST", rest);
 		},
@@ -377,7 +384,7 @@ export function register(ctx: PluginContext): void {
 			})
 			.strict(),
 		async run(args, context) {
-			const config = await mustConfig(context);
+			const config = mustConfig(context);
 			const secret = await mustToken(context, config);
 
 			const { status, body } = await send(config, secret, `/cards/${encodeURIComponent(args.id)}`, "PATCH", {
@@ -401,7 +408,7 @@ export function register(ctx: PluginContext): void {
 		mutating: true,
 		args: z.object({ id: z.string().trim().min(1) }).strict(),
 		async run(args, context) {
-			const config = await mustConfig(context);
+			const config = mustConfig(context);
 			return write(context, config, `/cards/${encodeURIComponent(args.id)}`, "DELETE", undefined);
 		},
 	});
@@ -521,38 +528,37 @@ async function mustToken(context: ActionContext, config: Config): Promise<string
 
 // ---------- configuration --------------------------------------------------
 
-async function readConfig(context: ActionContext): Promise<Config | null> {
-	let raw;
-	try {
-		raw = await fs.readFile(context.resolve(CONFIG), "utf8");
-	} catch {
-		return null;
-	}
+/**
+ * The board this project is pointed at.
+ *
+ * READ FROM `context.settings`, NOT FROM A FILE OF OUR OWN. This plugin used to
+ * write `.AgenticProject/kanban.json` and parse it back, which worked and was the
+ * wrong shape: the values were invisible to every screen in the studio, so the
+ * only way to see or change them was to open this plugin’s own tab and find the
+ * form. Declaring them in plugin.json (§8.17) puts them on the settings screen and
+ * in `agentic plugin config` for free, and deletes the parsing.
+ *
+ * A MISSING `remote` IS THE UNCONFIGURED STATE, and it is a state rather than an
+ * error: an unset setting is ABSENT rather than empty (resolveSettings), so this
+ * can tell "never configured" from "deliberately blank" and the UI renders a setup
+ * form instead of failing to clone "".
+ */
+function configOf(context: ActionContext): Config | null {
+	const dir = typeof context.settings["dir"] === "string" ? context.settings["dir"] : DEFAULT_DIR;
+	const port = typeof context.settings["port"] === "number" ? context.settings["port"] : DEFAULT_PORT;
+	const remote = typeof context.settings["remote"] === "string" && context.settings["remote"] ? context.settings["remote"] : null;
 
-	let parsed: { remote?: unknown; dir?: unknown; port?: unknown };
-	try {
-		parsed = JSON.parse(raw);
-	} catch (error) {
-		throw new Error(`${CONFIG} is not valid JSON: ${messageOf(error)}`);
-	}
-
-	return {
-		remote: typeof parsed.remote === "string" ? parsed.remote : null,
-		dir: typeof parsed.dir === "string" && parsed.dir ? parsed.dir : DEFAULT_DIR,
-		port: typeof parsed.port === "number" && Number.isInteger(parsed.port) ? parsed.port : DEFAULT_PORT,
-	};
+	// A board needs somewhere to be before anything here can run. `dir` has a
+	// default so it is effectively always present; `remote` is what someone has
+	// to supply, and until they have there is nothing to report but "unconfigured".
+	if (!remote && !dir) return null;
+	return { remote, dir, port };
 }
 
-async function mustConfig(context: ActionContext): Promise<Config> {
-	const config = await readConfig(context);
+function mustConfig(context: ActionContext): Config {
+	const config = configOf(context);
 	if (!config) throw new Error("No board is configured for this project yet — set its git source first.");
 	return config;
-}
-
-async function writeConfig(context: ActionContext, config: Config): Promise<void> {
-	const file = context.resolve(CONFIG);
-	await fs.mkdir(parentOf(file), { recursive: true });
-	await fs.writeFile(file, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
 /**
