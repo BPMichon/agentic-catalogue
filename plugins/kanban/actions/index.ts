@@ -134,6 +134,17 @@ export function register(ctx: PluginContext): void {
 
 			const base = { configured: true, remote: config.remote, dir: config.dir, port: config.port };
 
+			/*
+			 * A BOARD FOLDER THAT IS NOT THERE IS THE UNCONFIGURED STATE, and it used
+			 * not to be. `dir` carries a default, so configOf can never answer null and
+			 * every project reported itself configured — the tab offered "Start board",
+			 * and serve spawned into a folder that does not exist. The settings stay in
+			 * the answer so the setup form opens with the remote already filled in.
+			 */
+			if (!(await exists(context.resolve(config.dir)))) {
+				return { ...base, configured: false, running: false, columns: [], cards: [] };
+			}
+
 			const secret = await token(context.resolve(config.dir));
 			// No token file means `serve` has never run in this clone, which is a
 			// clearer answer than a refused connection would be.
@@ -278,7 +289,8 @@ export function register(ctx: PluginContext): void {
 
 			const died = new Promise<never>((_resolve, reject) => {
 				child.on("error", (error: NodeJS.ErrnoException) => {
-					reject(error.code === "ENOENT" || error.code === "EINVAL" ? new Error(MISSING_CLI) : error);
+					if (error.code !== "ENOENT" && error.code !== "EINVAL") return reject(error);
+					void whyNothingRan(target, MISSING_CLI).then((reason) => reject(new Error(reason)));
 				});
 				child.on("exit", (code) => {
 					reject(new Error(`kanban serve exited with code ${code}.${stderr ? `\n${stderr.trim()}` : ""}`));
@@ -619,6 +631,25 @@ const MISSING_CLI =
 	"  reinstall the plugin — `agentic plugin update kanban`, or install it again.";
 
 /**
+ * Which of the two absent things an ENOENT is actually about.
+ *
+ * NOT the one it reads like. A CWD THAT DOES NOT EXIST RAISES ENOENT TOO, and the
+ * message names the EXECUTABLE either way — a board folder nobody has cloned yet
+ * arrives here as `spawn node.exe ENOENT`. So this branch answered "your copy of
+ * git-kanban is missing" and sent people to reinstall a plugin that was intact,
+ * with the actual cause — no board — never mentioned. Ask the filesystem: if the
+ * directory is there, the command really is the thing that is not.
+ */
+export async function whyNothingRan(cwd: string, missing: string): Promise<string> {
+	if (await exists(cwd)) return missing;
+	return (
+		`There is no folder at ${cwd} to run in.` +
+		"\n  This project has no board yet — set its repository in the Kanban tab, which" +
+		"\n  clones the board and creates the folder."
+	);
+}
+
+/**
  * Refuse a remote that git would read as an option.
  *
  * THIS IS A TRUST BOUNDARY, and the risk is not the one it looks like. No shell is
@@ -681,7 +712,9 @@ function run(
 		// error, for when execFile throws instead of calling back.
 		const done = (error: ExecFileException | null, stdout = "", stderr = "") => {
 			if (!error) return resolve(stdout);
-			if (error.code === "ENOENT" || error.code === "EINVAL") return reject(new Error(missing));
+			if (error.code === "ENOENT" || error.code === "EINVAL") {
+				return void whyNothingRan(cwd, missing).then((reason) => reject(new Error(reason)));
+			}
 			if (error.killed) return reject(new Error(`${label(command, args)} did not finish within ${timeout / 1000}s.`));
 			// The tool's own stderr names the problem better than a paraphrase does —
 			// including a private clone that failed for want of credentials.

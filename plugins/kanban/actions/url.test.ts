@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertCloneable, ignoreLine } from "./index.ts";
+import { assertCloneable, ignoreLine, whyNothingRan } from "./index.ts";
 
 test("a repository URL that git could read as an option is refused", () => {
 	for (const hostile of [
@@ -53,4 +53,13 @@ test("the gitignore line is a directory rule, whatever separators it arrives wit
 	// the same single line, or `connect` appends a near-duplicate every time it runs.
 	assert.equal(ignoreLine(".AgenticProject\\board"), ".AgenticProject/board/");
 	assert.equal(ignoreLine(".AgenticProject/board/"), ".AgenticProject/board/");
+});
+
+test("an ENOENT is only blamed on the CLI when the directory it needed is there", async () => {
+	// The bug this is here for: a missing CWD raises ENOENT naming the EXECUTABLE,
+	// so a board nobody had cloned yet was reported as a missing git-kanban and
+	// sent people to reinstall an intact plugin.
+	const missing = "the CLI is not there";
+	assert.equal(await whyNothingRan(import.meta.dirname, missing), missing);
+	assert.match(await whyNothingRan(`${import.meta.dirname}/no-board-here`, missing), /no folder at/);
 });
