@@ -458,7 +458,7 @@ export function register(ctx: PluginContext): void {
 	 * reading that does not need a second question.
 	 */
 	ctx.action({
-		id: "kanban.renameCategory",
+		id: "kanban.rename-category",
 		summary: "Rename a category, and move every card in it to the new name.",
 		mutating: true,
 		args: z.object({ from: z.string().trim().min(1), to: z.string().trim().min(1) }).strict(),
@@ -478,7 +478,7 @@ export function register(ctx: PluginContext): void {
 	 * same commit that drops it from the list.
 	 */
 	ctx.action({
-		id: "kanban.removeCategory",
+		id: "kanban.remove-category",
 		summary: "Delete a category, moving every card in it to no category.",
 		mutating: true,
 		args: z.object({ name: z.string().trim().min(1) }).strict(),

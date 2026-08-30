@@ -642,7 +642,7 @@ export async function mount(root, api) {
 			// Fold state follows the name it was set on, or a folded row would spring
 			// open the moment it was renamed.
 			if (folded.delete(draft.from)) folded.add(to);
-			await mutate("kanban.renameCategory", { from: draft.from, to });
+			await mutate("kanban.rename-category", { from: draft.from, to });
 		});
 
 		on(columns, "ask-delete", (node) => {
@@ -657,7 +657,7 @@ export async function mount(root, api) {
 			const lane = node.dataset.lane;
 			deleting = null;
 			folded.delete(lane);
-			await mutate("kanban.removeCategory", { name: lane });
+			await mutate("kanban.remove-category", { name: lane });
 		});
 
 		const rename = columns.querySelector("[data-lane-rename]");
