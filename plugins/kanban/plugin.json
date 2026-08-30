@@ -7,7 +7,7 @@
 	"description": "A kanban board that lives in a git repo. Point it at a GitHub repository and it clones, serves and syncs the board through git-kanban.",
 	"kind": "plugin",
 	"appliesTo": { "projectKinds": ["*"] },
-	"requires": [{ "id": "git-kanban", "source": "github:BPMichon/GitKanban", "ref": "feature/cd/add-swimlanes" }],
+	"requires": [{ "id": "git-kanban", "source": "github:BPMichon/GitKanban", "ref": "v0.2.0" }],
 	"settings": [
 		{
 			"key": "remote",
