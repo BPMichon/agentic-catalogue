@@ -130,7 +130,7 @@ export function register(ctx: PluginContext): void {
 		args: z.object({}).strict(),
 		async run(_args, context) {
 			const config = configOf(context);
-			if (!config) return { configured: false, running: false, columns: [], cards: [] };
+			if (!config) return { configured: false, running: false, columns: [], categories: [], cards: [] };
 
 			const base = { configured: true, remote: config.remote, dir: config.dir, port: config.port };
 
@@ -142,13 +142,13 @@ export function register(ctx: PluginContext): void {
 			 * the answer so the setup form opens with the remote already filled in.
 			 */
 			if (!(await exists(context.resolve(config.dir)))) {
-				return { ...base, configured: false, running: false, columns: [], cards: [] };
+				return { ...base, configured: false, running: false, columns: [], categories: [], cards: [] };
 			}
 
 			const secret = await token(context.resolve(config.dir));
 			// No token file means `serve` has never run in this clone, which is a
 			// clearer answer than a refused connection would be.
-			if (!secret) return { ...base, running: false, columns: [], cards: [] };
+			if (!secret) return { ...base, running: false, columns: [], categories: [], cards: [] };
 
 			try {
 				const state = await request(config, secret, "/state");
@@ -156,7 +156,7 @@ export function register(ctx: PluginContext): void {
 			} catch (error) {
 				// A refused connection is the ordinary "not started yet" case, and the
 				// UI offers a Start button for it rather than an error.
-				return { ...base, running: false, columns: [], cards: [], problem: messageOf(error) };
+				return { ...base, running: false, columns: [], categories: [], cards: [], problem: messageOf(error) };
 			}
 		},
 	});
@@ -336,6 +336,7 @@ export function register(ctx: PluginContext): void {
 			.object({
 				title: z.string().trim().min(1),
 				status: z.string().trim().min(1).optional(),
+				category: z.string().optional(),
 				body: z.string().optional(),
 				assignee: z.string().optional(),
 				priority: z.string().optional(),
@@ -360,6 +361,13 @@ export function register(ctx: PluginContext): void {
 			.object({
 				id: z.string().trim().min(1),
 				status: z.string().trim().min(1),
+				/**
+				 * The row the card was dropped on. OPTIONAL, AND EMPTY IS MEANINGFUL:
+				 * absent leaves the card's category alone, `""` clears it. Without that
+				 * distinction a caller that does not draw rows would wipe one every
+				 * time it moved a card between columns.
+				 */
+				category: z.string().optional(),
 				beforeId: z.string().optional(),
 				afterId: z.string().optional(),
 			})
@@ -411,6 +419,30 @@ export function register(ctx: PluginContext): void {
 			}
 			if (status >= 400) throw new Error(errorIn(body, status));
 			return { ok: true, card: body };
+		},
+	});
+
+	/**
+	 * Replace the board's rows.
+	 *
+	 * THE WHOLE LIST, NOT ONE ROW. `POST /api/categories` is a replacement, so add,
+	 * rename, reorder and remove are all the same call and all one commit — which
+	 * also makes it idempotent, and means a caller never has to know whether the
+	 * row it wants already exists.
+	 *
+	 * Removing a row does NOT touch the cards that named it. Their `category` is
+	 * left alone and the board hands it back uncoerced, so hiding a row cannot
+	 * silently reclassify the work that was in it. A caller that draws rows is
+	 * expected to show such a card anyway rather than lose it.
+	 */
+	ctx.action({
+		id: "kanban.categories",
+		summary: "Replace the board's list of categories, and commit it.",
+		mutating: true,
+		args: z.object({ categories: z.array(z.string().trim().min(1)) }).strict(),
+		async run(args, context) {
+			const config = mustConfig(context);
+			return write(context, config, "/categories", "POST", args);
 		},
 	});
 

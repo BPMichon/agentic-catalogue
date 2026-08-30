@@ -30,6 +30,7 @@ const POLL_MS = 3000;
 /** Fields a card editor offers, in the order the front matter uses them. */
 const FIELDS = [
 	{ key: "title", label: "Title", kind: "line" },
+	{ key: "category", label: "Category", kind: "line" },
 	{ key: "assignee", label: "Assignee", kind: "line" },
 	{ key: "priority", label: "Priority", kind: "line" },
 	{ key: "labels", label: "Labels", kind: "line" },
@@ -45,8 +46,17 @@ export async function mount(root, api) {
 	let notice = "";
 	/** True while a write is in flight, so a second click cannot double-post. */
 	let busy = false;
-	/** `{ status, title }` for the column whose composer is open. */
+	/** `{ status, category, title }` for the cell whose composer is open. */
 	let composing = null;
+	/**
+	 * The name being typed into "+ Category", or null when it is not open.
+	 *
+	 * NULL RATHER THAN "" FOR CLOSED, because "" is a legitimate thing to have
+	 * typed — an open box someone has just cleared — and the two need to draw
+	 * differently. Module state for the same reason as `composing`: the poll can
+	 * re-render at any moment and would empty an `<input>` mid-word.
+	 */
+	let naming = null;
 	/** `{ id, fields, base, conflicts }` for the card being edited. */
 	let editing = null;
 	/** The card id being dragged. dataTransfer is not trustworthy in this sandbox. */
@@ -247,51 +257,130 @@ export async function mount(root, api) {
 		}
 
 		const cards = board.cards || [];
+		const statuses = board.columns || [];
+		const lanes = lanesOf(cards);
 
 		// A poll that changed nothing must not redraw, because redrawing moves the
 		// caret out of the composer someone is typing into. The signature covers
 		// everything the board draws from, so a real change still lands immediately —
 		// and losing focus to a card someone else genuinely moved is fair.
-		// `composing.status` and NOT `composing.title`: the title is mutated on every
-		// keystroke, so including it would make the signature differ on every poll
-		// and reintroduce exactly the redraw this exists to prevent. Which column has
-		// a composer open is what the markup depends on; the text is restored from
-		// module state whenever it is drawn.
-		const signature = JSON.stringify([board.columns, cards, composing && composing.status, editing && editing.id]);
+		// WHICH CELL HAS A COMPOSER, NOT WHAT IS IN IT, and `naming !== null` rather
+		// than `naming`: both drafts are mutated on every keystroke, so including
+		// their text would make the signature differ on every poll and reintroduce
+		// exactly the redraw this exists to prevent. Only what the markup depends on
+		// belongs here; the text is restored from module state whenever it is drawn.
+		const signature = JSON.stringify([
+			statuses,
+			lanes,
+			cards,
+			composing && [composing.status, composing.category],
+			naming !== null,
+			editing && editing.id,
+		]);
 		if (columns.dataset.view === "board" && columns.dataset.sig === signature) return;
 		columns.dataset.view = "board";
 		columns.dataset.sig = signature;
 
-		columns.innerHTML = `<div class="kb-cols">${(board.columns || [])
-			.map((status) => column(status, cards.filter((card) => card.status === status)))
-			.join("")}</div>`;
+		// A BOARD WITH NO ROWS DRAWS NO ROW AXIS. No label column, no "(none)" —
+		// which is the board exactly as it was before rows existed, so nobody has to
+		// opt out of a feature they never asked for. The empty-string lane is both
+		// that single unlabelled row and the "(none)" row below a labelled board, so
+		// there is one cell renderer rather than two code paths that must agree.
+		const labelled = lanes.length > 0;
+		const rows = labelled ? [...lanes, ""] : [""];
+
+		columns.innerHTML = `
+			<div class="kb-grid" style="grid-template-columns: ${labelled ? "150px " : ""}repeat(${statuses.length}, 260px)">
+				${labelled ? `<div class="kb-corner"></div>` : ""}
+				${statuses
+					.map(
+						(status) => `<div class="kb-colhead">
+							<span>${esc(status)}</span>
+							<span class="kb-count">${cards.filter((entry) => entry.status === status).length}</span>
+						</div>`,
+					)
+					.join("")}
+				${rows.map((lane) => laneRow(lane, statuses, cards, labelled)).join("")}
+				${newLane()}
+			</div>`;
 
 		wireBoard();
 		drawSide();
 	}
 
-	function column(status, cards) {
+	/**
+	 * The rows to draw.
+	 *
+	 * REGISTERED ROWS FIRST, IN THE BOARD'S ORDER, then any category a card claims
+	 * that the board does not list. The server hands a card's category back
+	 * uncoerced — unlike its status, which is snapped to a real column — so a row
+	 * removed on another machine, or one that arrived on a card before the list
+	 * did, still has somewhere to draw its cards. An untidy extra row is a much
+	 * smaller problem than a card nobody can see.
+	 */
+	function lanesOf(cards) {
+		const lanes = [];
+		const seen = new Set();
+		for (const name of [...(board.categories || []).map((entry) => String(entry).trim()), ...cards.map(catOf)]) {
+			if (!name || seen.has(name)) continue;
+			seen.add(name);
+			lanes.push(name);
+		}
+		return lanes;
+	}
+
+	/** One row: its label, then one cell per column. */
+	function laneRow(lane, statuses, cards, labelled) {
+		const mine = cards.filter((entry) => catOf(entry) === lane);
+		const label = labelled
+			? `<div class="kb-lane-label${lane ? "" : " kb-lane-none"}">
+					<span>${lane ? esc(lane) : "(none)"}</span>
+					<span class="kb-count">${mine.length}</span>
+				</div>`
+			: "";
+
+		return label + statuses.map((status) => cell(status, lane, mine.filter((entry) => entry.status === status))).join("");
+	}
+
+	/** One column-and-row cell: a drop target, and a way to add a card into it. */
+	function cell(status, lane, cards) {
 		const composer =
-			composing && composing.status === status
+			composing && composing.status === status && composing.category === lane
 				? `<div class="kb-composer">
-						<textarea data-compose="${esc(status)}" rows="2" placeholder="Card title">${esc(composing.title)}</textarea>
+						<textarea data-compose rows="2" placeholder="Card title">${esc(composing.title)}</textarea>
 						<div class="kb-row">
-							<button data-act="add" data-status="${esc(status)}" class="kb-primary">Add</button>
+							<button data-act="add" class="kb-primary">Add</button>
 							<button data-act="cancel-add" class="kb-ghost">Cancel</button>
 						</div>
 					</div>`
-				: `<button data-act="compose" data-status="${esc(status)}" class="kb-add">+ Card</button>`;
+				: `<button data-act="compose" data-status="${esc(status)}" data-lane="${esc(lane)}" class="kb-add kb-newcard">+ Card</button>`;
 
-		return `<section class="kb-col" data-column="${esc(status)}">
-			<header>
-				<span>${esc(status)}</span>
-				<span class="kb-count">${cards.length}</span>
-			</header>
-			<div class="kb-drop" data-column="${esc(status)}">
+		return `<div class="kb-cell">
+			<div class="kb-drop" data-column="${esc(status)}" data-category="${esc(lane)}">
 				${cards.map(card).join("")}
 			</div>
 			${composer}
-		</section>`;
+		</div>`;
+	}
+
+	/**
+	 * "+ Category", under the last row.
+	 *
+	 * Drawn even on a board with no rows at all — that is the board on which it
+	 * matters most, since it is the only way to get the first one.
+	 */
+	function newLane() {
+		const inner =
+			naming === null
+				? `<button data-act="new-lane" class="kb-add">+ Category</button>`
+				: `<div class="kb-composer">
+						<input data-lane-name value="${esc(naming)}" placeholder="Category name">
+						<div class="kb-row">
+							<button data-act="save-lane" class="kb-primary">Add</button>
+							<button data-act="cancel-lane" class="kb-ghost">Cancel</button>
+						</div>
+					</div>`;
+		return `<div class="kb-newlane">${inner}</div>`;
 	}
 
 	function card(entry) {
@@ -353,7 +442,17 @@ export async function mount(root, api) {
 				if (!dragging) return;
 
 				const over = event.target.closest("[data-card]");
-				const args = { id: dragging, status: drop.dataset.column };
+				// BOTH AXES IN ONE CALL. A cell knows its column and its row, so a
+				// diagonal drag is one move and one commit rather than a move followed
+				// by an edit that could fail on its own. `category` is always sent, and
+				// the "(none)" row sends `""`, which the server reads as "clear it" —
+				// omitting the key instead would mean "leave it alone", and a card
+				// could never be dragged back out of a row.
+				const args = {
+					id: dragging,
+					status: drop.dataset.column,
+					category: drop.dataset.category || "",
+				};
 				if (over && over.dataset.card !== dragging) args.beforeId = over.dataset.card;
 				dragging = null;
 				mutate("kanban.move", args);
@@ -361,7 +460,7 @@ export async function mount(root, api) {
 		}
 
 		on(columns, "compose", (node) => {
-			composing = { status: node.dataset.status, title: "" };
+			composing = { status: node.dataset.status, category: node.dataset.lane || "", title: "" };
 			drawBoard();
 			const field = columns.querySelector("[data-compose]");
 			if (field) field.focus();
@@ -370,11 +469,17 @@ export async function mount(root, api) {
 			composing = null;
 			drawBoard();
 		});
-		on(columns, "add", async (node) => {
-			const title = (composing && composing.title.trim()) || "";
+		on(columns, "add", async () => {
+			const draft = composing;
+			const title = (draft && draft.title.trim()) || "";
 			if (!title) return;
 			composing = null;
-			await mutate("kanban.add", { title, status: node.dataset.status });
+			// The cell carries the row, so a card added into one is already in it.
+			// `category` is omitted rather than sent empty for the "(none)" row: this
+			// goes straight into the front matter, and "" would write a blank line.
+			const args = { title, status: draft.status };
+			if (draft.category) args.category = draft.category;
+			await mutate("kanban.add", args);
 		});
 
 		const field = columns.querySelector("[data-compose]");
@@ -392,6 +497,48 @@ export async function mount(root, api) {
 				}
 				if (event.key === "Escape") {
 					composing = null;
+					drawBoard();
+				}
+			});
+		}
+
+		// ---- "+ Category", the same shape as the card composer above ----
+
+		on(columns, "new-lane", () => {
+			naming = "";
+			drawBoard();
+			const box = columns.querySelector("[data-lane-name]");
+			if (box) box.focus();
+		});
+		on(columns, "cancel-lane", () => {
+			naming = null;
+			drawBoard();
+		});
+		on(columns, "save-lane", async () => {
+			const name = String(naming ?? "").trim();
+			naming = null;
+			const existing = (board.categories || []).map((entry) => String(entry).trim()).filter(Boolean);
+			// A row that is already there is a no-op, not an error. This button cannot
+			// know what somebody else added between two polls, and the endpoint takes
+			// the whole list — so the safe answer to "it exists" is to have wanted
+			// that, and simply redraw.
+			if (!name || existing.includes(name)) return drawBoard();
+			await mutate("kanban.categories", { categories: [...existing, name] });
+		});
+
+		const box = columns.querySelector("[data-lane-name]");
+		if (box) {
+			box.addEventListener("input", () => {
+				if (naming !== null) naming = box.value;
+			});
+			box.addEventListener("keydown", (event) => {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					const button = columns.querySelector('[data-act="save-lane"]');
+					if (button) button.click();
+				}
+				if (event.key === "Escape") {
+					naming = null;
 					drawBoard();
 				}
 			});
@@ -579,6 +726,17 @@ function esc(value) {
 	);
 }
 
+/**
+ * A card's row.
+ *
+ * TRIMMED, because " design" and "design" are the same row to a person and a
+ * stray space would silently split one into two — and the field is free text
+ * typed into the editor, so that is a matter of when, not whether.
+ */
+function catOf(entry) {
+	return String((entry.extra || {}).category || "").trim();
+}
+
 /** A class-name-safe form of a free-text priority, for the colour swatch. */
 function slug(value) {
 	return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -628,13 +786,52 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 label input, label textarea { color: var(--ap-fg); font-size: 13.5px; }
 code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
 
-.kb-cols { display: flex; gap: 12px; padding: 14px; align-items: flex-start; min-height: 100%; }
-.kb-col {
-	flex: none; width: 260px; display: flex; flex-direction: column; gap: 8px;
-	background: rgb(from var(--ap-fg) r g b / 0.03);
+/*
+ * The board is a grid, not a row of columns, because the two axes have to line
+ * up: a row's cells must sit under the right column headers, and a tall card
+ * must push its whole row down rather than just its own column. A max-content
+ * width with a min-width floor lets the grid be as wide as its columns need while
+ * still filling a window wider than they are. The column template is set inline
+ * because the number of columns is only known at draw time.
+ */
+.kb-grid { display: grid; gap: 8px 12px; padding: 14px; align-content: start; width: max-content; min-width: 100%; }
+
+/*
+ * The two headers stay put while the board scrolls under them. The box shadow
+ * is not decoration: it paints the grid gap in the same opaque colour, and
+ * without it cards slide visibly through the gutter beside a sticky label.
+ */
+.kb-colhead {
+	position: sticky; top: 0; z-index: 2;
+	background: var(--ap-solid); box-shadow: 0 -14px 0 var(--ap-solid), 0 8px 0 var(--ap-solid);
+	display: flex; justify-content: space-between; align-items: center; gap: 8px;
+	font-weight: 600; padding: 2px 8px 6px;
+}
+.kb-lane-label {
+	position: sticky; left: 0; z-index: 1;
+	background: var(--ap-solid); box-shadow: -14px 0 0 var(--ap-solid), 12px 0 0 var(--ap-solid);
+	display: flex; flex-direction: column; gap: 2px; justify-content: flex-start;
+	font-weight: 600; padding-top: 8px; overflow-wrap: anywhere;
+}
+.kb-lane-none { font-weight: 400; color: var(--ap-muted); }
+/* Over both, so neither scrolls out from under the other at the origin. */
+.kb-corner { position: sticky; top: 0; left: 0; z-index: 3; background: var(--ap-solid); box-shadow: -14px 0 0 var(--ap-solid); }
+
+.kb-cell {
+	display: flex; flex-direction: column; gap: 8px;
+	background: color-mix(in srgb, var(--ap-fg, #000) 3%, transparent);
 	border: 1px solid var(--ap-line); border-radius: var(--ap-radius); padding: 8px;
 }
-.kb-col header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+/*
+ * One "+ Card" per cell would be five times as many dashed buttons as before, so
+ * it is held in reserve until the pointer is in the cell. Reserved rather than
+ * removed — opacity, not display — so revealing it shifts nothing, and
+ * focus-within keeps it reachable by keyboard, where there is no hover.
+ */
+.kb-newcard { opacity: 0; }
+.kb-cell:hover .kb-newcard, .kb-cell:focus-within .kb-newcard { opacity: 1; }
+.kb-newlane { grid-column: 1 / -1; max-width: 240px; padding-top: 2px; }
+
 .kb-count { color: var(--ap-muted); font-weight: 400; }
 .kb-drop { display: flex; flex-direction: column; gap: 8px; min-height: 48px; border-radius: 8px; }
 .kb-drop.kb-over { outline: 2px dashed var(--ap-accent); outline-offset: 2px; }
