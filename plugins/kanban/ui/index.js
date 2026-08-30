@@ -57,6 +57,21 @@ export async function mount(root, api) {
 	 * re-render at any moment and would empty an `<input>` mid-word.
 	 */
 	let naming = null;
+	/** `{ from, to }` while a row's name is being edited, or null. */
+	let renaming = null;
+	/** The row whose delete is waiting to be confirmed, or null. */
+	let deleting = null;
+	/**
+	 * Rows that are collapsed.
+	 *
+	 * MODULE STATE, AND DELIBERATELY NOT PERSISTED. Which rows someone has folded
+	 * is a view preference, not board data: writing it to `kanban.json` would push
+	 * one person's folded rows onto everybody else's board through git. There is
+	 * nowhere private to put it either — `localStorage` fails silently in this
+	 * sandbox — and a plugin setting would spend a run record on every click. So
+	 * it lives as long as the tab does, which is what a view preference is worth.
+	 */
+	const folded = new Set();
 	/** `{ id, fields, base, conflicts }` for the card being edited. */
 	let editing = null;
 	/** The card id being dragged. dataTransfer is not trustworthy in this sandbox. */
@@ -275,6 +290,9 @@ export async function mount(root, api) {
 			cards,
 			composing && [composing.status, composing.category],
 			naming !== null,
+			[...folded].sort(),
+			renaming && renaming.from,
+			deleting,
 			editing && editing.id,
 		]);
 		if (columns.dataset.view === "board" && columns.dataset.sig === signature) return;
@@ -290,7 +308,7 @@ export async function mount(root, api) {
 		const rows = labelled ? [...lanes, ""] : [""];
 
 		columns.innerHTML = `
-			<div class="kb-grid" style="grid-template-columns: ${labelled ? "150px " : ""}repeat(${statuses.length}, 260px)">
+			<div class="kb-grid" style="grid-template-columns: ${labelled ? "170px " : ""}repeat(${statuses.length}, 260px)">
 				${labelled ? `<div class="kb-corner"></div>` : ""}
 				${statuses
 					.map(
@@ -329,17 +347,83 @@ export async function mount(root, api) {
 		return lanes;
 	}
 
-	/** One row: its label, then one cell per column. */
+	/** One row: its label, then one cell per column — or, folded, a row of counts. */
 	function laneRow(lane, statuses, cards, labelled) {
 		const mine = cards.filter((entry) => catOf(entry) === lane);
-		const label = labelled
-			? `<div class="kb-lane-label${lane ? "" : " kb-lane-none"}">
-					<span>${lane ? esc(lane) : "(none)"}</span>
-					<span class="kb-count">${mine.length}</span>
-				</div>`
-			: "";
+		const at = (status) => mine.filter((entry) => entry.status === status);
+		if (!labelled) return statuses.map((status) => cell(status, lane, at(status))).join("");
 
-		return label + statuses.map((status) => cell(status, lane, mine.filter((entry) => entry.status === status))).join("");
+		// A FOLDED ROW KEEPS ITS CELLS, holding a count instead of cards, rather
+		// than collapsing to one strip across the board. The counts stay under the
+		// columns they belong to, so a folded row still answers "where is that work"
+		// — and the grid keeps one item per track, so nothing below it shifts.
+		// It is not a drop target: with no cards shown there is no position to drop
+		// into, and a silent append is not what dropping on a row would mean.
+		const body = folded.has(lane)
+			? statuses.map((status) => `<div class="kb-shut">${at(status).length || ""}</div>`).join("")
+			: statuses.map((status) => cell(status, lane, at(status))).join("");
+
+		return laneLabel(lane, mine.length) + body;
+	}
+
+	/**
+	 * A row's label: fold, name, count, and the way to rename or remove it.
+	 *
+	 * The name is a button rather than a span so that renaming is reachable by
+	 * keyboard and announced as an action; "(none)" is not one, because it is the
+	 * absence of a row rather than a row, and has no name to change or remove.
+	 */
+	function laneLabel(lane, count) {
+		if (renaming && renaming.from === lane) {
+			return `<div class="kb-lane-label">
+				<div class="kb-composer">
+					<input data-lane-rename value="${esc(renaming.to)}" aria-label="New name for ${esc(lane)}">
+					<div class="kb-row">
+						<button data-act="save-rename" class="kb-primary">Rename</button>
+						<button data-act="cancel-rename" class="kb-ghost">Cancel</button>
+					</div>
+				</div>
+			</div>`;
+		}
+
+		const shut = folded.has(lane);
+		return `<div class="kb-lane-label${lane ? "" : " kb-lane-none"}">
+			<div class="kb-lane-head">
+				<button data-act="fold" data-lane="${esc(lane)}" class="kb-fold" aria-expanded="${shut ? "false" : "true"}"
+					title="${shut ? "Expand" : "Collapse"} ${lane ? esc(lane) : "(none)"}">${shut ? "▸" : "▾"}</button>
+				${
+					lane
+						? `<button data-act="rename" data-lane="${esc(lane)}" class="kb-lane-name" title="Rename ${esc(lane)}">${esc(lane)}</button>`
+						: `<span class="kb-lane-name">(none)</span>`
+				}
+				<span class="kb-count">${count}</span>
+			</div>
+			${lane ? laneTools(lane, count) : ""}
+		</div>`;
+	}
+
+	/**
+	 * Remove a row, with the question asked in place.
+	 *
+	 * INLINE AND NOT `confirm()`, which does nothing at all in this sandbox — it
+	 * returns without showing anything, so a plain confirm would silently mean
+	 * "no" and the button would look broken. The count is in the question because
+	 * "delete" over a row of work should say what happens to the work: the cards
+	 * are kept and moved to (none), never removed.
+	 */
+	function laneTools(lane, count) {
+		if (deleting !== lane) {
+			return `<div class="kb-lane-tools">
+				<button data-act="ask-delete" data-lane="${esc(lane)}" class="kb-ghost kb-small">Delete</button>
+			</div>`;
+		}
+		return `<div class="kb-lane-confirm">
+			<span class="kb-muted">${count ? `Move ${count} card${count === 1 ? "" : "s"} to (none)?` : "Remove this empty row?"}</span>
+			<div class="kb-row">
+				<button data-act="do-delete" data-lane="${esc(lane)}" class="kb-danger kb-small">Delete</button>
+				<button data-act="cancel-delete" class="kb-ghost kb-small">Cancel</button>
+			</div>
+		</div>`;
 	}
 
 	/** One column-and-row cell: a drop target, and a way to add a card into it. */
@@ -525,6 +609,74 @@ export async function mount(root, api) {
 			if (!name || existing.includes(name)) return drawBoard();
 			await mutate("kanban.categories", { categories: [...existing, name] });
 		});
+
+		// ---- folding, renaming and removing a row ----
+
+		on(columns, "fold", (node) => {
+			const lane = node.dataset.lane;
+			if (folded.has(lane)) folded.delete(lane);
+			else folded.add(lane);
+			drawBoard();
+		});
+
+		on(columns, "rename", (node) => {
+			// Seeded with the current name, and selected, so the common edit is a
+			// small correction and the common replacement is one keystroke.
+			renaming = { from: node.dataset.lane, to: node.dataset.lane };
+			drawBoard();
+			const field = columns.querySelector("[data-lane-rename]");
+			if (field) {
+				field.focus();
+				field.select();
+			}
+		});
+		on(columns, "cancel-rename", () => {
+			renaming = null;
+			drawBoard();
+		});
+		on(columns, "save-rename", async () => {
+			const draft = renaming;
+			renaming = null;
+			const to = String((draft && draft.to) || "").trim();
+			if (!draft || !to || to === draft.from) return drawBoard();
+			// Fold state follows the name it was set on, or a folded row would spring
+			// open the moment it was renamed.
+			if (folded.delete(draft.from)) folded.add(to);
+			await mutate("kanban.renameCategory", { from: draft.from, to });
+		});
+
+		on(columns, "ask-delete", (node) => {
+			deleting = node.dataset.lane;
+			drawBoard();
+		});
+		on(columns, "cancel-delete", () => {
+			deleting = null;
+			drawBoard();
+		});
+		on(columns, "do-delete", async (node) => {
+			const lane = node.dataset.lane;
+			deleting = null;
+			folded.delete(lane);
+			await mutate("kanban.removeCategory", { name: lane });
+		});
+
+		const rename = columns.querySelector("[data-lane-rename]");
+		if (rename) {
+			rename.addEventListener("input", () => {
+				if (renaming) renaming.to = rename.value;
+			});
+			rename.addEventListener("keydown", (event) => {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					const button = columns.querySelector('[data-act="save-rename"]');
+					if (button) button.click();
+				}
+				if (event.key === "Escape") {
+					renaming = null;
+					drawBoard();
+				}
+			});
+		}
 
 		const box = columns.querySelector("[data-lane-name]");
 		if (box) {
@@ -814,6 +966,31 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 	font-weight: 600; padding-top: 8px; overflow-wrap: anywhere;
 }
 .kb-lane-none { font-weight: 400; color: var(--ap-muted); }
+.kb-lane-head { display: flex; align-items: baseline; gap: 6px; }
+.kb-fold { border: none; padding: 0; width: 14px; flex: none; color: var(--ap-muted); line-height: 1.4; }
+/*
+ * A button that has to read as the row's title: the name IS the rename control,
+ * so it drops every button affordance except the one that says it can be edited.
+ */
+.kb-lane-name {
+	border: none; padding: 0; font: inherit; font-weight: inherit; color: inherit;
+	text-align: left; flex: 1; min-width: 0; overflow-wrap: anywhere;
+}
+button.kb-lane-name { cursor: text; }
+button.kb-lane-name:hover { text-decoration: underline dotted; text-underline-offset: 2px; }
+/* Held back until the row is pointed at or tabbed into, like "+ Card". */
+.kb-lane-tools { opacity: 0; }
+.kb-lane-label:hover .kb-lane-tools, .kb-lane-label:focus-within .kb-lane-tools { opacity: 1; }
+.kb-lane-confirm { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+/*
+ * A folded row keeps one item per column so the counts stay under the columns
+ * they describe and nothing below the row shifts sideways.
+ */
+.kb-shut {
+	min-height: 20px; display: flex; align-items: center; justify-content: center;
+	font-size: 12px; color: var(--ap-muted);
+	border-bottom: 1px solid var(--ap-line); border-radius: 0;
+}
 /* Over both, so neither scrolls out from under the other at the origin. */
 .kb-corner { position: sticky; top: 0; left: 0; z-index: 3; background: var(--ap-solid); box-shadow: -14px 0 0 var(--ap-solid); }
 

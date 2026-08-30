@@ -446,6 +446,48 @@ export function register(ctx: PluginContext): void {
 		},
 	});
 
+	/**
+	 * Rename a row, carrying its cards with it.
+	 *
+	 * ITS OWN ACTION RATHER THAN A `kanban.categories` CALL WITH THE NEW LIST,
+	 * because a replaced list cannot say whether a name that vanished was renamed
+	 * or removed — and the cards that named it need opposite treatment in the two
+	 * cases. The server does both halves in one commit.
+	 *
+	 * Renaming onto a row that already exists merges them, which is the only
+	 * reading that does not need a second question.
+	 */
+	ctx.action({
+		id: "kanban.renameCategory",
+		summary: "Rename a category, and move every card in it to the new name.",
+		mutating: true,
+		args: z.object({ from: z.string().trim().min(1), to: z.string().trim().min(1) }).strict(),
+		async run(args, context) {
+			const config = mustConfig(context);
+			const path = `/categories/${encodeURIComponent(args.from)}/rename`;
+			return write(context, config, path, "POST", { to: args.to });
+		},
+	});
+
+	/**
+	 * Remove a row. Its cards are kept and moved to "(none)".
+	 *
+	 * A ROW IS A GROUPING, NOT A CONTAINER — deleting one must never be a way to
+	 * delete work by accident. `kanban.remove` deletes a card; this deletes only
+	 * the row, and the server clears the field on every card that named it in the
+	 * same commit that drops it from the list.
+	 */
+	ctx.action({
+		id: "kanban.removeCategory",
+		summary: "Delete a category, moving every card in it to no category.",
+		mutating: true,
+		args: z.object({ name: z.string().trim().min(1) }).strict(),
+		async run(args, context) {
+			const config = mustConfig(context);
+			return write(context, config, `/categories/${encodeURIComponent(args.name)}`, "DELETE", undefined);
+		},
+	});
+
 	ctx.action({
 		id: "kanban.remove",
 		summary: "Delete a card from the board, and commit the removal.",

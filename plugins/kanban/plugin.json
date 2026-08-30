@@ -44,7 +44,9 @@
 			"kanban.move",
 			"kanban.edit",
 			"kanban.remove",
-			"kanban.categories"
+			"kanban.categories",
+			"kanban.renameCategory",
+			"kanban.removeCategory"
 		]
 	},
 	"ui": {
@@ -60,7 +62,9 @@
 			"kanban.move",
 			"kanban.edit",
 			"kanban.remove",
-			"kanban.categories"
+			"kanban.categories",
+			"kanban.renameCategory",
+			"kanban.removeCategory"
 		]
 	}
 }
