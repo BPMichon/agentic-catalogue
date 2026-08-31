@@ -8,7 +8,7 @@ one markdown file per card, no server, no database, and a git repository as the 
 There is nothing to install by hand. `git-kanban` is declared as a **requirement**:
 
 ```json
-"requires": [{ "id": "git-kanban", "source": "github:BPMichon/GitKanban", "ref": "v0.1.0" }]
+"requires": [{ "id": "git-kanban", "source": "github:BPMichon/GitKanban", "ref": "v0.2.0" }]
 ```
 
 `agentic plugin install kanban` clones it to `requires/git-kanban` beside the plugin and
@@ -21,10 +21,11 @@ no plugin, rather than a plugin that installs cleanly and dies at first use. Tha
 whole reason this is a declared requirement instead of a "run `npm i -g` first" note in a
 README: the failure lands where someone can act on it.
 
-Pinned at **v0.1.0** deliberately. Before that tag, deleting a card that never had a
+Pinned at **v0.2.0** deliberately — a tag, never a branch, so two machines on the same
+plugin version run the same code. Before v0.1.0, deleting a card that never had a
 description removed the file and then failed to commit the removal, so the card came back
 on the next clone while looking gone locally — and this plugin's Delete button hits that
-path directly. `agentic plugin update kanban` is what moves the pin.
+path directly. v0.2.0 adds rows. `agentic plugin update kanban` is what moves the pin.
 
 ## Set the source
 
